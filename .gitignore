@@ -1,0 +1,24 @@
+# Local Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# OS/editor metadata
+.DS_Store
+.idea/
+.vscode/
+
+# Local datasets and exported artifacts
+20*_panda_dual_pika*/
+*.zip
+outputs/
+*.parquet
+*.mp4
+
+# Generated binaries
+piper_description/urdf/compile
