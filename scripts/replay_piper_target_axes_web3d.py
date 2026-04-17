@@ -43,7 +43,7 @@ AXES = (
 
 def pose_to_matrix(pose: np.ndarray) -> np.ndarray:
     transform = np.eye(4)
-    transform[:3, :3] = R.from_euler("xyz", pose[3:]).as_matrix()
+    transform[:3, :3] = R.from_euler("ZYX", pose[3:]).as_matrix()
     transform[:3, 3] = pose[:3]
     return transform
 

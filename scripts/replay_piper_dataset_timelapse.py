@@ -28,8 +28,13 @@ DEFAULT_POSE_COLUMN = "observation.state.arm.right.end_effector_pose"
 DEFAULT_GRIPPER_COLUMN = "observation.state.arm.right.end_effector_value"
 DEFAULT_JOINTS = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
 DEFAULT_GRIPPER_JOINTS = ("joint7", "joint8")
-DEFAULT_INITIAL_JOINTS = (0.000, 0.004, -0.281, -0.000, 0.364, 0.000)
+DEFAULT_INITIAL_JOINTS = (0.000, 0.368, -0.692, -0.000,1.039, 0.000)
 DEFAULT_TRACE_LINKS = ("base_link", "link1", "link2", "link3", "link4", "link5", "link6", "gripper_base")
+
+# Dataset delta poses are recorded in a frame that differs from the tool frame by a -pi/2 rotation
+# around Y. Translation and rotation deltas both need this similarity transform to be re-expressed
+# in the current end-effector (tool) frame before integration.
+DELTA_POSE_BASIS_ROTATION = R.from_euler("Y", -np.pi / 2.0, degrees=False)
 
 
 @dataclass
@@ -152,23 +157,44 @@ def resolve_parquet_file(dataset_root: Path, file_path: Path | None, episode_ind
 
 
 def pose6_to_se3(pose: np.ndarray) -> pin.SE3:
-    rotation = R.from_euler("xyz", pose[3:]).as_matrix()
+    rotation = R.from_euler("ZYX", pose[3:]).as_matrix()
     return pin.SE3(rotation, pose[:3].copy())
 
 
 def se3_to_pose6(transform: pin.SE3) -> np.ndarray:
     pose = np.zeros(6, dtype=np.float64)
     pose[:3] = transform.translation
-    pose[3:] = R.from_matrix(transform.rotation).as_euler("xyz")
+    pose[3:] = R.from_matrix(transform.rotation).as_euler("ZYX")
     return pose
 
 
+def wrap_to_pi(values: np.ndarray) -> np.ndarray:
+    return (values + np.pi) % (2 * np.pi) - np.pi
+
+
+def convert_delta_pose_to_tool_frame(delta_pose: np.ndarray, rot_scale: float) -> tuple[np.ndarray, R]:
+    # Translation delta expressed in the recorded basis -> rotated into the tool frame.
+    delta_position_tool = DELTA_POSE_BASIS_ROTATION.apply(delta_pose[:3])
+    # Rotation delta expressed in the recorded basis -> similarity transform into the tool frame.
+    delta_rotation_in_recorded_basis = R.from_euler("ZYX", delta_pose[3:] * rot_scale, degrees=False)
+    delta_rotation = (
+        DELTA_POSE_BASIS_ROTATION
+        * delta_rotation_in_recorded_basis
+        * DELTA_POSE_BASIS_ROTATION.inv()
+    )
+    return delta_position_tool, delta_rotation
+
+
 def apply_delta_pose(current_pose: np.ndarray, delta_pose: np.ndarray, pos_scale: float, rot_scale: float) -> np.ndarray:
+    current_pose = np.asarray(current_pose, dtype=np.float64).reshape(6)
+    delta_pose = np.asarray(delta_pose, dtype=np.float64).reshape(6)
+
+    current_rot = R.from_euler("ZYX", current_pose[3:], degrees=False)
+    delta_position_tool, delta_rot = convert_delta_pose_to_tool_frame(delta_pose, rot_scale)
+
     target = current_pose.copy()
-    target[:3] += delta_pose[:3] * pos_scale
-    current_rot = R.from_euler("xyz", current_pose[3:])
-    delta_rot = R.from_euler("xyz", delta_pose[3:] * rot_scale)
-    target[3:] = (current_rot * delta_rot).as_euler("xyz")
+    target[:3] += current_rot.apply(delta_position_tool * pos_scale)
+    target[3:] = wrap_to_pi((current_rot * delta_rot).as_euler("ZYX", degrees=False))
     return target
 
 
