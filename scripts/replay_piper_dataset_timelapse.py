@@ -18,11 +18,19 @@ import numpy as np
 import pinocchio as pin
 import pyarrow.parquet as pq
 from PIL import Image, ImageDraw, ImageFont
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R, Slerp
+
+try:
+    import pink
+    from pink.tasks import FrameTask, PostureTask
+except ImportError:
+    pink = None
+    FrameTask = None
+    PostureTask = None
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DATASET = ROOT / "20260413_panda_dual_pika"
+DEFAULT_DATASET = ROOT / "dataset"/"20260416_panda_dual_pika_cjh_32_33"
 DEFAULT_URDF = ROOT / "piper_description" / "urdf" / "piper_description.urdf"
 DEFAULT_POSE_COLUMN = "observation.state.arm.right.end_effector_pose"
 DEFAULT_GRIPPER_COLUMN = "observation.state.arm.right.end_effector_value"
@@ -196,6 +204,25 @@ def apply_delta_pose(current_pose: np.ndarray, delta_pose: np.ndarray, pos_scale
     target[:3] += current_rot.apply(delta_position_tool * pos_scale)
     target[3:] = wrap_to_pi((current_rot * delta_rot).as_euler("ZYX", degrees=False))
     return target
+
+
+def interpolate_pose6(start_pose: np.ndarray, target_pose: np.ndarray, alpha: float) -> np.ndarray:
+    alpha = float(np.clip(alpha, 0.0, 1.0))
+    start_pose = np.asarray(start_pose, dtype=np.float64).reshape(6)
+    target_pose = np.asarray(target_pose, dtype=np.float64).reshape(6)
+    interpolated = np.zeros(6, dtype=np.float64)
+    interpolated[:3] = (1.0 - alpha) * start_pose[:3] + alpha * target_pose[:3]
+    rotations = R.from_quat(
+        np.vstack(
+            (
+                R.from_euler("ZYX", start_pose[3:], degrees=False).as_quat(),
+                R.from_euler("ZYX", target_pose[3:], degrees=False).as_quat(),
+            )
+        )
+    )
+    slerp = Slerp([0.0, 1.0], rotations)
+    interpolated[3:] = wrap_to_pi(slerp([alpha])[0].as_euler("ZYX", degrees=False))
+    return interpolated
 
 
 def slice_range(total_steps: int, start: int, end: int | None) -> tuple[int, int]:
@@ -439,13 +466,132 @@ class PinocchioIK:
         return np.asarray(points, dtype=np.float64)
 
 
-def solve_ik_sequence(ik: PinocchioIK, poses: np.ndarray) -> tuple[np.ndarray, list[IKResult]]:
+class PinkReplayIK:
+    def __init__(
+        self,
+        fk: PinocchioIK,
+        *,
+        position_cost: float = 1.0,
+        orientation_cost: float = 0.5,
+        posture_cost: float = 1e-3,
+        dt: float = 1.0,
+        solver: str = "quadprog",
+        max_iters: int = 40,
+        pos_tol: float = 5e-4,
+        rot_tol: float = 5e-3,
+        sub_step_pos: float = 0.01,
+        sub_step_rot: float = np.deg2rad(6.0),
+        divergence_pos: float = 0.05,
+        divergence_rot: float = np.deg2rad(30.0),
+    ) -> None:
+        if pink is None or FrameTask is None or PostureTask is None:
+            raise ImportError(
+                "未安装 pink 依赖，请先执行 `pip install -r requirements-ik.txt`。"
+            )
+        self.fk = fk
+        self.configuration = pink.Configuration(
+            fk.model,
+            fk.model.createData(),
+            fk.q.copy(),
+        )
+        self.frame_task = FrameTask(
+            fk.ee_frame,
+            position_cost=position_cost,
+            orientation_cost=orientation_cost,
+            lm_damping=1e-6,
+        )
+        self.posture_task = PostureTask(cost=posture_cost)
+        self.posture_task.set_target(fk.q.copy())
+        self.tasks = [self.frame_task, self.posture_task]
+        self.dt = dt
+        self.solver = solver
+        self.max_iters = max_iters
+        self.pos_tol = pos_tol
+        self.rot_tol = rot_tol
+        self.sub_step_pos = sub_step_pos
+        self.sub_step_rot = sub_step_rot
+        self.divergence_pos = divergence_pos
+        self.divergence_rot = divergence_rot
+
+    def _current_transform(self) -> pin.SE3:
+        return self.configuration.get_transform_frame_to_world(self.fk.ee_frame)
+
+    def _error_to_pose(self, target_pose: np.ndarray) -> np.ndarray:
+        target = pose6_to_se3(target_pose)
+        return pin.log6(self._current_transform().actInv(target)).vector
+
+    def _subtarget_poses(self, target_pose: np.ndarray) -> list[np.ndarray]:
+        current_pose = se3_to_pose6(self._current_transform())
+        error = self._error_to_pose(target_pose)
+        steps = max(
+            1,
+            int(
+                np.ceil(
+                    max(
+                        np.linalg.norm(error[:3]) / max(self.sub_step_pos, 1e-9),
+                        np.linalg.norm(error[3:]) / max(self.sub_step_rot, 1e-9),
+                    )
+                )
+            ),
+        )
+        return [interpolate_pose6(current_pose, target_pose, step / steps) for step in range(1, steps + 1)]
+
+    def solve(self, target_pose: np.ndarray) -> IKResult:
+        target_pose = np.asarray(target_pose, dtype=np.float64).reshape(6)
+        q_before = self.configuration.q.copy()
+        total_iterations = 0
+        error = self._error_to_pose(target_pose)
+        for subtarget_pose in self._subtarget_poses(target_pose):
+            subtarget = pose6_to_se3(subtarget_pose)
+            self.frame_task.set_target(subtarget)
+            for iteration in range(1, self.max_iters + 1):
+                total_iterations += 1
+                velocity = pink.solve_ik(
+                    self.configuration,
+                    self.tasks,
+                    self.dt,
+                    solver=self.solver,
+                )
+                velocity[~self.fk.active_mask] = 0.0
+                self.configuration.integrate_inplace(velocity, self.dt)
+                self.configuration.update(self.configuration.q)
+                error = pin.log6(self._current_transform().actInv(subtarget)).vector
+                if np.linalg.norm(error[:3]) < self.pos_tol and np.linalg.norm(error[3:]) < self.rot_tol:
+                    break
+            else:
+                error = pin.log6(self._current_transform().actInv(subtarget)).vector
+
+        error = self._error_to_pose(target_pose)
+        position_error = float(np.linalg.norm(error[:3]))
+        rotation_error = float(np.linalg.norm(error[3:]))
+        converged = position_error < self.pos_tol and rotation_error < self.rot_tol
+        if position_error > self.divergence_pos or rotation_error > self.divergence_rot:
+            self.configuration.update(q_before)
+            self.fk.q = q_before.copy()
+            return IKResult(q_before.copy(), False, total_iterations, position_error, rotation_error)
+        q_solution = clip_to_limits(self.fk.model, self.configuration.q.copy())
+        if not np.allclose(q_solution, self.configuration.q):
+            self.configuration.update(q_solution)
+        self.fk.q = q_solution.copy()
+        return IKResult(q_solution.copy(), converged, total_iterations, position_error, rotation_error)
+
+
+def solve_ik_sequence(
+    ik: PinocchioIK,
+    poses: np.ndarray,
+    *,
+    ik_options: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, list[IKResult]]:
+    solver = PinkReplayIK(ik, **(ik_options or {}))
     qs = []
     results = []
     for pose in poses:
-        results.append(ik.solve(pose))
-        qs.append(ik.q.copy())
-    return np.asarray(qs), results
+        result = solver.solve(pose)
+        results.append(result)
+        qs.append(solver.configuration.q.copy())
+        solver.posture_task.set_target(solver.configuration.q.copy())
+        ik.q = solver.configuration.q.copy()
+    return np.asarray(qs, dtype=np.float64), results
 
 
 def project_points(points: np.ndarray, bounds_min: np.ndarray, bounds_max: np.ndarray, width: int, height: int, padding: int) -> list[tuple[int, int]]:

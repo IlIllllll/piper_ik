@@ -6,3 +6,5 @@ pyarrow>=15.0
 scipy>=1.10
 imageio>=2.30
 imageio-ffmpeg>=0.4
+pin-pink>=3.1
+qpsolvers[quadprog]>=4.0

@@ -63,6 +63,13 @@ def make_path_line(points: np.ndarray) -> g.Line:
     )
 
 
+def make_target_path_line(points: np.ndarray) -> g.Line:
+    return g.Line(
+        g.PointsGeometry(points.T),
+        g.LineBasicMaterial(color=0xC2185B, linewidth=4, transparent=True, opacity=0.72),
+    )
+
+
 def sample_indices(length: int, count: int) -> np.ndarray:
     if count <= 0 or length <= 0:
         return np.asarray([], dtype=int)
@@ -84,6 +91,7 @@ class DatasetWeb3DApp:
         initial_joint_values: np.ndarray,
         episode_index: int | None,
         invert_gripper: bool,
+        ik_options: dict[str, Any] | None,
         meshcat_port: int,
         ghost_count: int,
         marker_count: int,
@@ -99,6 +107,7 @@ class DatasetWeb3DApp:
         self.initial_joint_values = np.asarray(initial_joint_values, dtype=np.float64).reshape(-1)
         self.episode_index = episode_index
         self.invert_gripper = invert_gripper
+        self.ik_options = dict(ik_options or {})
         self.root_node = root_node
         self.ghost_count = ghost_count
         self.marker_count = marker_count
@@ -121,6 +130,7 @@ class DatasetWeb3DApp:
         self.poses = np.empty((0, 6), dtype=np.float64)
         self.qs = np.empty((0, self.ik.model.nq), dtype=np.float64)
         self.ik_results = []
+        self.target_points = np.empty((0, 3), dtype=np.float64)
         self.ee_points = np.empty((0, 3), dtype=np.float64)
         self.frame = 0
         self.viewer, self.meshcat_server = make_meshcat_viewer(meshcat_port)
@@ -141,6 +151,7 @@ class DatasetWeb3DApp:
         return np.asarray(points, dtype=np.float64)
 
     def _load_static_scene(self, marker_count: int, ghost_count: int) -> None:
+        self.viewer[f"{self.root_node}/target_path"].set_object(make_target_path_line(self.target_points))
         self.viewer[f"{self.root_node}/ee_path"].set_object(make_path_line(self.ee_points))
         for marker_id, index in enumerate(sample_indices(len(self.ee_points), marker_count)):
             self.viewer[f"{self.root_node}/markers/{marker_id:03d}"].set_object(
@@ -164,6 +175,7 @@ class DatasetWeb3DApp:
         )
 
     def _clear_replay_scene(self) -> None:
+        self.viewer[f"{self.root_node}/target_path"].delete()
         self.viewer[f"{self.root_node}/ee_path"].delete()
         self.viewer[f"{self.root_node}/markers"].delete()
         self.viewer[f"{self.root_node}/ghosts"].delete()
@@ -192,7 +204,8 @@ class DatasetWeb3DApp:
             )
             start_pose = self._reset_initial_configuration()
             self.poses = build_pose_plan(self.deltas, start_pose, self.config)
-            self.qs, self.ik_results = solve_ik_sequence(self.ik, self.poses)
+            self.target_points = self.poses[:, :3].copy()
+            self.qs, self.ik_results = solve_ik_sequence(self.ik, self.poses, ik_options=self.ik_options)
             self.qs = apply_gripper_values_to_qs(
                 model=self.ik.model,
                 qs=self.qs,
@@ -549,6 +562,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--initial-x-offset", type=float, default=0.0, help="初始位姿 x 偏移，米；向后 20cm 可设为 -0.2")
     parser.add_argument("--initial-y-offset", type=float, default=0.0, help="初始位姿 y 偏移，米")
     parser.add_argument("--initial-z-offset", type=float, default=0.0, help="初始位姿 z 偏移，米")
+    parser.add_argument("--position-cost", type=float, default=1.0, help="pink 末端位置任务代价")
+    parser.add_argument("--orientation-cost", type=float, default=0.5, help="pink 末端姿态任务代价")
+    parser.add_argument("--posture-cost", type=float, default=1e-3, help="pink 姿态保持正则代价")
+    parser.add_argument("--ik-pos-tol", type=float, default=5e-4, help="pink 位置收敛阈值，米")
+    parser.add_argument("--ik-rot-tol", type=float, default=5e-3, help="pink 旋转收敛阈值，弧度")
+    parser.add_argument("--ik-max-iters", type=int, default=40, help="pink 单个子目标最大迭代次数")
+    parser.add_argument("--ik-sub-step-pos", type=float, default=0.01, help="pink 子目标位置步长，米")
+    parser.add_argument("--ik-sub-step-rot", type=float, default=float(np.deg2rad(6.0)), help="pink 子目标旋转步长，弧度")
+    parser.add_argument("--ik-solver", default="quadprog", help="pink QP 求解器名称")
     parser.add_argument("--host", default="127.0.0.1", help="控制网页 host")
     parser.add_argument("--control-port", type=int, default=8020, help="控制网页端口")
     parser.add_argument("--meshcat-port", type=int, default=7060, help="MeshCat web 端口")
@@ -577,6 +599,17 @@ def main() -> int:
         start=args.start,
         end=args.end,
     )
+    ik_options = {
+        "position_cost": args.position_cost,
+        "orientation_cost": args.orientation_cost,
+        "posture_cost": args.posture_cost,
+        "pos_tol": args.ik_pos_tol,
+        "rot_tol": args.ik_rot_tol,
+        "max_iters": args.ik_max_iters,
+        "sub_step_pos": args.ik_sub_step_pos,
+        "sub_step_rot": args.ik_sub_step_rot,
+        "solver": args.ik_solver,
+    }
     app = DatasetWeb3DApp(
         parquet_file=parquet_file,
         dataset_root=dataset_root,
@@ -589,6 +622,7 @@ def main() -> int:
         initial_joint_values=np.asarray(args.initial_joints, dtype=np.float64),
         episode_index=episode_index,
         invert_gripper=args.invert_gripper,
+        ik_options=ik_options,
         meshcat_port=args.meshcat_port,
         ghost_count=args.ghost_count,
         marker_count=args.marker_count,

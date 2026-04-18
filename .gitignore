@@ -22,3 +22,4 @@ outputs/
 
 # Generated binaries
 piper_description/urdf/compile
+dataset/
