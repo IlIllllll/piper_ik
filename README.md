@@ -1,11 +1,12 @@
 # Piper IK 与数据集轨迹回放
 
-本项目围绕 `piper_description/urdf/piper_description.urdf` 提供四类工具：
+本项目围绕 `piper_description/urdf/piper_description.urdf` 提供三类可视化工具，并把数据集读取和 IK 逻辑拆成独立工具模块：
 
 - `scripts/piper_ik_visualizer.py`: 手动控制 XYZ/Yaw/Pitch/Roll 的 Pinocchio IK 可视化界面。
 - `scripts/replay_piper_dataset_web3d.py`: 读取数据集，在网页中用 MeshCat 三维显示机械臂轨迹回放。
 - `scripts/replay_piper_target_axes_web3d.py`: 读取数据集，只显示目标姿态 3D 坐标轴移动路线，不做机械臂逆解。
-- `scripts/replay_piper_dataset_timelapse.py`: 读取数据集，生成延时摄影式轨迹 PNG/MP4；可选 `--execute` 真实回放到 Piper 机械臂。
+- `scripts/piper_dataset_reader.py`: Piper 数据集读取、episode 定位和目标位姿轨迹构建工具。
+- `scripts/piper_ik_utils.py`: Piper Pinocchio/Pink 逆解、FK、关节限位和夹爪映射工具。
 
 默认数据集为：
 
@@ -34,7 +35,6 @@ python -m pip install -r requirements-ik.txt
 - `meshcat`: 三维网页可视化
 - `pyarrow`: 读取 parquet 数据集
 - `scipy`: 姿态旋转计算
-- `imageio` / `imageio-ffmpeg`: 输出 MP4
 
 ## 3D 数据集回放网页
 
@@ -178,37 +178,8 @@ python scripts/replay_piper_dataset_web3d.py \
 
 对应代码位置：
 
-- `scripts/replay_piper_dataset_timelapse.py` 的 `build_pose_plan()`
+- `scripts/piper_dataset_reader.py` 的 `build_pose_plan()`
 - `scripts/replay_piper_dataset_web3d.py` 的 argparse 参数定义
-
-## 生成延时摄影轨迹影像
-
-只生成离线 PNG/MP4，不连接真实机械臂：
-
-```bash
-python scripts/replay_piper_dataset_timelapse.py \
-  --video \
-  --episode-index 10 \
-  --sample-count 64 \
-  --output-dir outputs
-```
-
-输出：
-
-```text
-outputs/episode_000010_timelapse.png
-outputs/episode_000010_timelapse.mp4
-```
-
-带初始位姿偏移生成：
-
-```bash
-python scripts/replay_piper_dataset_timelapse.py \
-  --video \
-  --sample-count 64 \
-  --output-dir outputs \
-  --initial-x-offset -0.2
-```
 
 ## 手动 IK 控制界面
 
@@ -232,50 +203,6 @@ python scripts/piper_ik_visualizer.py --ee-frame gripper_base
 python scripts/piper_ik_visualizer.py --control-port 8011
 python scripts/piper_ik_visualizer.py --meshcat-port 7050
 python scripts/piper_ik_visualizer.py --open-meshcat
-```
-
-## 真机数据集回放
-
-默认脚本不会连接真实机械臂。只有显式加 `--execute` 才会执行真机回放：
-
-```bash
-python scripts/replay_piper_dataset_timelapse.py \
-  --execute \
-  --ip can_right \
-  --robot-project-root /path/to/control/project
-```
-
-真机回放依赖外部控制工程中的：
-
-```text
-app.devices
-app.utils.abstract_fractory.RobotFactory
-```
-
-可以通过以下方式指定控制工程：
-
-```bash
-python scripts/replay_piper_dataset_timelapse.py \
-  --execute \
-  --robot-project-root /Users/bingcm/program/lcp/pika_setup
-```
-
-或设置环境变量：
-
-```bash
-export PIPER_ROBOT_PROJECT_ROOT=/Users/bingcm/program/lcp/pika_setup
-```
-
-真机测试建议先小范围、低速：
-
-```bash
-python scripts/replay_piper_dataset_timelapse.py \
-  --execute \
-  --ip can_right \
-  --start 0 \
-  --end 10 \
-  --speed 0.3 \
-  --initial-x-offset -0.2
 ```
 
 ## 数据列说明
@@ -377,4 +304,4 @@ http://127.0.0.1/
 --rot-scale
 ```
 
-真机回放时脚本会读取机械臂当前 FK 作为累加起点，更接近真实条件。
+网页回放使用 URDF 的离线初始姿态作为累加起点。

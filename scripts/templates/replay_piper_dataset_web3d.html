@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Piper Replay 3D</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #1d2520;
+      background: #eef2ef;
+    }
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+    }
+    main { min-height: 100vh; background: #111; }
+    iframe {
+      display: block;
+      width: 100%;
+      height: 100%;
+      min-height: 100vh;
+      border: 0;
+    }
+    aside {
+      padding: 18px;
+      background: #f7faf8;
+      border-left: 1px solid #d6ddd7;
+      overflow-y: auto;
+    }
+    h1 { margin: 0 0 10px; font-size: 22px; }
+    h2 {
+      margin: 18px 0 10px;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      color: #58645d;
+    }
+    button {
+      min-height: 38px;
+      border: 1px solid #bcc7c0;
+      border-radius: 6px;
+      background: white;
+      color: #1d2520;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:hover { background: #edf5f0; }
+    button.primary { background: #1f8a5b; border-color: #1f8a5b; color: white; }
+    .buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    label { display: grid; gap: 6px; margin: 12px 0; color: #3d4841; font-size: 13px; }
+    input[type="range"] { width: 100%; }
+    input[type="number"], select {
+      border: 1px solid #c5cdc7;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font: inherit;
+      background: white;
+    }
+    select { width: 100%; }
+    .status {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 7px 12px;
+      padding: 10px 0;
+      border-top: 1px solid #dfe5e0;
+      border-bottom: 1px solid #dfe5e0;
+      font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .status span:nth-child(odd) { color: #5b665f; }
+    .error { min-height: 18px; margin-top: 10px; color: #a33a2a; font-size: 13px; overflow-wrap: anywhere; }
+    a { color: #176a4c; }
+    @media (max-width: 980px) {
+      .shell { grid-template-columns: 1fr; }
+      main, iframe { min-height: 62vh; }
+      aside { border-left: 0; border-top: 1px solid #d6ddd7; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <main><iframe src="{{ meshcat_url }}" title="MeshCat replay"></iframe></main>
+    <aside>
+      <h1>Piper Replay 3D</h1>
+      <a href="{{ meshcat_url }}" target="_blank" rel="noreferrer">Open MeshCat</a>
+      <h2>Dataset</h2>
+      <label>Episode <select id="episode"></select></label>
+      <button id="loadEpisode">Load Episode</button>
+      <h2>Playback</h2>
+      <div class="buttons">
+        <button id="prev">Prev</button>
+        <button class="primary" id="play">Play</button>
+        <button id="next">Next</button>
+      </div>
+      <label>Frame <input id="slider" type="range" min="0" max="0" value="0"></label>
+      <label>Speed, fps <input id="speed" type="number" value="10" min="1" max="60" step="1"></label>
+      <h2>State</h2>
+      <div class="status" id="status"></div>
+      <div class="error" id="error"></div>
+    </aside>
+  </div>
+  <script>
+    const statusEl = document.querySelector("#status");
+    const errorEl = document.querySelector("#error");
+    const slider = document.querySelector("#slider");
+    const speedEl = document.querySelector("#speed");
+    const playBtn = document.querySelector("#play");
+    const episodeEl = document.querySelector("#episode");
+    const loadEpisodeBtn = document.querySelector("#loadEpisode");
+    let state = null;
+    let timer = null;
+    let episodeOptionsCount = null;
+
+    function fmt(value, digits = 4) { return Number(value).toFixed(digits); }
+
+    function basename(path) {
+      return String(path || "").split("/").pop();
+    }
+
+    function setEpisodeOptions(totalEpisodes, selectedEpisode) {
+      const total = totalEpisodes === null || totalEpisodes === undefined ? 0 : Number(totalEpisodes);
+      if (episodeOptionsCount !== total) {
+        episodeOptionsCount = total;
+        episodeEl.innerHTML = "";
+        if (total > 0) {
+          for (let index = 0; index < total; index += 1) {
+            const option = document.createElement("option");
+            option.value = String(index);
+            option.textContent = `Episode ${index}`;
+            episodeEl.appendChild(option);
+          }
+          episodeEl.disabled = false;
+          loadEpisodeBtn.disabled = false;
+        } else {
+          const option = document.createElement("option");
+          option.value = selectedEpisode === null || selectedEpisode === undefined ? "0" : String(selectedEpisode);
+          option.textContent = selectedEpisode === null || selectedEpisode === undefined ? "Direct file" : `Episode ${selectedEpisode}`;
+          episodeEl.appendChild(option);
+          episodeEl.disabled = true;
+          loadEpisodeBtn.disabled = true;
+        }
+      }
+      if (selectedEpisode !== null && selectedEpisode !== undefined) {
+        episodeEl.value = String(selectedEpisode);
+      }
+    }
+
+    function render(nextState) {
+      state = nextState;
+      setEpisodeOptions(state.total_episodes, state.episode_index);
+      slider.max = Math.max(0, state.frame_count - 1);
+      slider.value = state.frame;
+      const rows = [
+        ["episode", state.episode_index === null ? "direct file" : String(state.episode_index)],
+        ["file", basename(state.file)],
+        ["frame", `${state.frame + 1}/${state.frame_count}`],
+        ["mode", state.delta_mode],
+        ["ik", `${state.converged_count}/${state.frame_count}`],
+        ["converged", String(state.converged)],
+        ["pos err", fmt(state.position_error)],
+        ["rot err", fmt(state.rotation_error)],
+        ["scale", `${fmt(state.pos_scale, 2)} / ${fmt(state.rot_scale, 2)}`],
+        ["z lift", fmt(state.z_lift, 3)],
+        ["initial q", state.initial_joints.map(value => fmt(value, 3)).join(", ")],
+        ["gripper", state.gripper_value === null ? "none" : `${fmt(state.gripper_value, 3)}${state.invert_gripper ? " inv" : ""}`],
+        ["offset", `${fmt(state.initial_x_offset, 3)}, ${fmt(state.initial_y_offset, 3)}, ${fmt(state.initial_z_offset, 3)}`]
+      ];
+      statusEl.innerHTML = rows.map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join("");
+    }
+
+    async function postFrame(frame) {
+      errorEl.textContent = "";
+      const response = await fetch("/api/frame", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({frame})
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error || "Request failed");
+      render(data.state);
+    }
+
+    async function postEpisode(episodeIndex) {
+      stop();
+      errorEl.textContent = "Loading episode...";
+      const response = await fetch("/api/episode", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({episode_index: episodeIndex})
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error || "Request failed");
+      errorEl.textContent = "";
+      render(data.state);
+    }
+
+    async function refresh() {
+      const response = await fetch("/api/state");
+      const data = await response.json();
+      if (data.ok) render(data.state);
+    }
+
+    function stop() {
+      if (timer) clearInterval(timer);
+      timer = null;
+      playBtn.textContent = "Play";
+    }
+
+    function play() {
+      if (timer) { stop(); return; }
+      playBtn.textContent = "Pause";
+      const tick = async () => {
+        try {
+          const next = state.frame + 1 >= state.frame_count ? 0 : state.frame + 1;
+          await postFrame(next);
+        } catch (err) {
+          errorEl.textContent = err.message;
+          stop();
+        }
+      };
+      timer = setInterval(tick, Math.max(25, 1000 / Number(speedEl.value || 10)));
+    }
+
+    playBtn.addEventListener("click", play);
+    loadEpisodeBtn.addEventListener("click", () => postEpisode(Number(episodeEl.value)).catch(err => errorEl.textContent = err.message));
+    episodeEl.addEventListener("change", () => postEpisode(Number(episodeEl.value)).catch(err => errorEl.textContent = err.message));
+    document.querySelector("#prev").addEventListener("click", () => postFrame(Math.max(0, state.frame - 1)).catch(err => errorEl.textContent = err.message));
+    document.querySelector("#next").addEventListener("click", () => postFrame(Math.min(state.frame_count - 1, state.frame + 1)).catch(err => errorEl.textContent = err.message));
+    slider.addEventListener("input", () => postFrame(Number(slider.value)).catch(err => errorEl.textContent = err.message));
+    speedEl.addEventListener("change", () => { if (timer) { stop(); play(); } });
+    refresh();
+  </script>
+</body>
+</html>
