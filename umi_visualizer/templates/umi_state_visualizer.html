@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UMI Arms State</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #1d2520;
+      background: #edf1ef;
+    }
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+    }
+    main {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto minmax(340px, 1fr) 260px;
+      border-right: 1px solid #cfd7d2;
+    }
+    header {
+      padding: 14px 18px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      background: #f7faf8;
+      border-bottom: 1px solid #d8dfda;
+    }
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+    }
+    .path {
+      margin-top: 5px;
+      color: #617069;
+      font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      overflow-wrap: anywhere;
+    }
+    .tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    select,
+    button,
+    input[type="number"] {
+      min-height: 34px;
+      border: 1px solid #b9c5bf;
+      border-radius: 6px;
+      background: #fff;
+      color: #1d2520;
+      font: inherit;
+      padding: 6px 9px;
+    }
+    button {
+      cursor: pointer;
+    }
+    button:hover { background: #edf5f0; }
+    button.primary {
+      background: #1f7a63;
+      border-color: #1f7a63;
+      color: white;
+    }
+    button.danger {
+      background: #a33a2a;
+      border-color: #a33a2a;
+      color: white;
+    }
+    .canvas-wrap {
+      position: relative;
+      min-height: 0;
+      background: #f1f5f3;
+    }
+    .canvas-wrap.interactive {
+      cursor: grab;
+    }
+    .canvas-wrap.interactive:active {
+      cursor: grabbing;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .chart-wrap {
+      min-height: 0;
+      background: #fbfcfb;
+      border-top: 1px solid #d8dfda;
+    }
+    aside {
+      padding: 16px;
+      overflow-y: auto;
+      background: #f7faf8;
+    }
+    h2 {
+      margin: 18px 0 9px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      color: #68766f;
+    }
+    h2:first-child { margin-top: 0; }
+    .status {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 7px 12px;
+      padding: 10px 0;
+      border-top: 1px solid #dde4df;
+      border-bottom: 1px solid #dde4df;
+      font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .status span:nth-child(odd) { color: #65736c; }
+    .hand {
+      border-top: 1px solid #dde4df;
+      padding: 11px 0 4px;
+    }
+    .hand-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+    .swatch {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 7px;
+      vertical-align: -1px;
+    }
+    .kv {
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr);
+      gap: 5px 9px;
+      font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .kv span:nth-child(odd) { color: #65736c; }
+    label.check {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: #3b4741;
+      user-select: none;
+    }
+    input[type="range"] {
+      width: 100%;
+      margin: 12px 0 8px;
+    }
+    .error {
+      min-height: 18px;
+      color: #a33a2a;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    @media (max-width: 980px) {
+      .shell { grid-template-columns: 1fr; }
+      main { min-height: 72vh; border-right: 0; }
+      aside { border-top: 1px solid #cfd7d2; }
+      header { grid-template-columns: 1fr; }
+      .tools { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <main>
+      <header>
+        <div>
+          <h1>UMI Arms State</h1>
+          <div class="path" id="logPath">{{ log_file }}</div>
+        </div>
+        <div class="tools">
+          <select id="kind">
+            <option value="robot_target">robot_target</option>
+            <option value="umi_raw" selected>UMI raw</option>
+            <option value="robot_feedback">B feedback</option>
+            <option value="all">All</option>
+          </select>
+          <select id="projection">
+            <option value="3d">3D</option>
+            <option value="xy">XY</option>
+            <option value="xz">XZ</option>
+            <option value="yz">YZ</option>
+          </select>
+          <select id="metric">
+            <option value="0">x</option>
+            <option value="1">y</option>
+            <option value="2">z</option>
+            <option value="3">roll</option>
+            <option value="4">pitch</option>
+            <option value="5">yaw</option>
+            <option value="grip">grip</option>
+          </select>
+          <button id="refresh">Refresh</button>
+          <button id="receiveToggle">Stop Receiving</button>
+          <button class="primary" id="play">Play</button>
+        </div>
+      </header>
+      <section class="canvas-wrap">
+        <canvas id="trajectory"></canvas>
+      </section>
+      <section class="chart-wrap">
+        <canvas id="chart"></canvas>
+      </section>
+    </main>
+    <aside>
+      <h2>Playback</h2>
+      <input id="frame" type="range" min="0" max="0" value="0">
+      <div class="status" id="status"></div>
+      <div class="error" id="error"></div>
+
+      <h2>Hands</h2>
+      <label class="check"><input id="showLeft" type="checkbox" checked> Left</label>
+      <label class="check" style="margin-left: 12px;"><input id="showRight" type="checkbox" checked> Right</label>
+      <div id="hands"></div>
+    </aside>
+  </div>
+  <script>
+    const leftColor = "#0b6e69";
+    const rightColor = "#c65d32";
+    const muted = "#9ba8a1";
+    const trajectory = document.querySelector("#trajectory");
+    const trajectoryWrap = document.querySelector(".canvas-wrap");
+    const chart = document.querySelector("#chart");
+    const kindEl = document.querySelector("#kind");
+    const projectionEl = document.querySelector("#projection");
+    const metricEl = document.querySelector("#metric");
+    const frameEl = document.querySelector("#frame");
+    const statusEl = document.querySelector("#status");
+    const handsEl = document.querySelector("#hands");
+    const errorEl = document.querySelector("#error");
+    const playBtn = document.querySelector("#play");
+    const receiveBtn = document.querySelector("#receiveToggle");
+    const showLeftEl = document.querySelector("#showLeft");
+    const showRightEl = document.querySelector("#showRight");
+    let samples = [];
+    let filtered = [];
+    let dataInfo = null;
+    let frame = 0;
+    let timer = null;
+    let ws = null;
+    let wsRetryTimer = null;
+    let viewYaw = -0.75;
+    let viewPitch = 0.72;
+    let draggingView = false;
+    let dragStart = null;
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;"
+      }[char]));
+    }
+
+    function resizeCanvas(canvas) {
+      const rect = canvas.getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.round(rect.width * ratio));
+      canvas.height = Math.max(1, Math.round(rect.height * ratio));
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      return {ctx, width: rect.width, height: rect.height};
+    }
+
+    function fmt(value, digits = 4) {
+      return value === null || value === undefined || Number.isNaN(Number(value)) ? "n/a" : Number(value).toFixed(digits);
+    }
+
+    function activeHands() {
+      const hands = [];
+      if (showLeftEl.checked) hands.push("left");
+      if (showRightEl.checked) hands.push("right");
+      return hands;
+    }
+
+    function pose(sample, hand) {
+      const item = sample?.hands?.[hand];
+      return item && item.valid && Array.isArray(item.pose6) ? item.pose6 : null;
+    }
+
+    function filteredSamples() {
+      const kind = kindEl.value;
+      return kind === "all" ? samples.slice() : samples.filter(sample => sample.kind === kind);
+    }
+
+    function projectionAxes() {
+      if (projectionEl.value === "xz") return [0, 2, "X", "Z"];
+      if (projectionEl.value === "yz") return [1, 2, "Y", "Z"];
+      return [0, 1, "X", "Y"];
+    }
+
+    function boundsFor(points) {
+      if (!points.length) return {minX: -1, maxX: 1, minY: -1, maxY: 1};
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      points.forEach(([x, y]) => {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      });
+      const dx = Math.max(1e-6, maxX - minX);
+      const dy = Math.max(1e-6, maxY - minY);
+      return {minX: minX - dx * 0.08, maxX: maxX + dx * 0.08, minY: minY - dy * 0.08, maxY: maxY + dy * 0.08};
+    }
+
+    function makeProjector(bounds, width, height, padding) {
+      const spanX = Math.max(1e-6, bounds.maxX - bounds.minX);
+      const spanY = Math.max(1e-6, bounds.maxY - bounds.minY);
+      const scale = Math.min((width - padding * 2) / spanX, (height - padding * 2) / spanY);
+      const cx = (bounds.minX + bounds.maxX) / 2;
+      const cy = (bounds.minY + bounds.maxY) / 2;
+      return (x, y) => [width / 2 + (x - cx) * scale, height / 2 - (y - cy) * scale];
+    }
+
+    function bounds3DFor(points) {
+      if (!points.length) {
+        return {minX: -1, maxX: 1, minY: -1, maxY: 1, minZ: -1, maxZ: 1};
+      }
+      let minX = Infinity, minY = Infinity, minZ = Infinity;
+      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+      points.forEach(([x, y, z]) => {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+      });
+      const dx = Math.max(1e-6, maxX - minX);
+      const dy = Math.max(1e-6, maxY - minY);
+      const dz = Math.max(1e-6, maxZ - minZ);
+      return {
+        minX: minX - dx * 0.1, maxX: maxX + dx * 0.1,
+        minY: minY - dy * 0.1, maxY: maxY + dy * 0.1,
+        minZ: minZ - dz * 0.1, maxZ: maxZ + dz * 0.1
+      };
+    }
+
+    function make3DProjector(bounds, width, height) {
+      const cx = (bounds.minX + bounds.maxX) / 2;
+      const cy = (bounds.minY + bounds.maxY) / 2;
+      const cz = (bounds.minZ + bounds.maxZ) / 2;
+      const span = Math.max(
+        bounds.maxX - bounds.minX,
+        bounds.maxY - bounds.minY,
+        bounds.maxZ - bounds.minZ,
+        1e-6
+      );
+      const scale = Math.min(width, height) * 0.58 / span;
+      const cyaw = Math.cos(viewYaw), syaw = Math.sin(viewYaw);
+      const cpitch = Math.cos(viewPitch), spitch = Math.sin(viewPitch);
+      return (x, y, z) => {
+        const dx = x - cx, dy = y - cy, dz = z - cz;
+        const x1 = cyaw * dx - syaw * dy;
+        const y1 = syaw * dx + cyaw * dy;
+        const z1 = dz;
+        const y2 = cpitch * y1 - spitch * z1;
+        const z2 = spitch * y1 + cpitch * z1;
+        return {
+          x: width / 2 + x1 * scale,
+          y: height / 2 - z2 * scale,
+          depth: y2
+        };
+      };
+    }
+
+    function drawGrid(ctx, width, height, labels) {
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "#f1f5f3";
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = "#d4ddd8";
+      ctx.lineWidth = 1;
+      for (let x = 48; x < width; x += 72) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+      }
+      for (let y = 44; y < height; y += 72) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+      }
+      ctx.fillStyle = "#5d6b64";
+      ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+      ctx.fillText(labels[0], width - 28, height - 18);
+      ctx.fillText(labels[1], 18, 22);
+    }
+
+    function draw3DGrid(ctx, project, bounds, width, height) {
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "#f1f5f3";
+      ctx.fillRect(0, 0, width, height);
+
+      const gridLines = [];
+      const steps = 5;
+      for (let i = 0; i <= steps; i += 1) {
+        const tx = bounds.minX + (bounds.maxX - bounds.minX) * i / steps;
+        const ty = bounds.minY + (bounds.maxY - bounds.minY) * i / steps;
+        gridLines.push([[tx, bounds.minY, bounds.minZ], [tx, bounds.maxY, bounds.minZ]]);
+        gridLines.push([[bounds.minX, ty, bounds.minZ], [bounds.maxX, ty, bounds.minZ]]);
+      }
+
+      ctx.strokeStyle = "#d4ddd8";
+      ctx.lineWidth = 1;
+      gridLines.forEach(([a, b]) => {
+        const pa = project(...a);
+        const pb = project(...b);
+        ctx.beginPath();
+        ctx.moveTo(pa.x, pa.y);
+        ctx.lineTo(pb.x, pb.y);
+        ctx.stroke();
+      });
+
+      const origin = [bounds.minX, bounds.minY, bounds.minZ];
+      const axes = [
+        {to: [bounds.maxX, bounds.minY, bounds.minZ], color: "#8c4d42", label: "X"},
+        {to: [bounds.minX, bounds.maxY, bounds.minZ], color: "#4d785e", label: "Y"},
+        {to: [bounds.minX, bounds.minY, bounds.maxZ], color: "#496f9d", label: "Z"}
+      ];
+      axes.forEach(axis => {
+        const a = project(...origin);
+        const b = project(...axis.to);
+        ctx.strokeStyle = axis.color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.fillStyle = axis.color;
+        ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+        ctx.fillText(axis.label, b.x + 6, b.y - 6);
+      });
+
+      ctx.fillStyle = "#5d6b64";
+      ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+      ctx.fillText("Drag to rotate 3D view", 18, 22);
+    }
+
+    function drawTrajectory3D(ctx, width, height) {
+      const hands = activeHands();
+      const allPoints = [];
+      filtered.forEach(sample => {
+        hands.forEach(hand => {
+          const p = pose(sample, hand);
+          if (p) allPoints.push([p[0], p[1], p[2]]);
+        });
+      });
+      const bounds = bounds3DFor(allPoints);
+      const project = make3DProjector(bounds, width, height);
+      draw3DGrid(ctx, project, bounds, width, height);
+      if (!filtered.length || !allPoints.length) {
+        ctx.fillStyle = muted;
+        ctx.font = "14px system-ui, sans-serif";
+        ctx.fillText("No samples", 24, 48);
+        return;
+      }
+
+      hands.forEach(hand => {
+        ctx.strokeStyle = hand === "left" ? leftColor : rightColor;
+        ctx.lineWidth = 2.4;
+        ctx.globalAlpha = 0.88;
+        ctx.beginPath();
+        let started = false;
+        filtered.forEach(sample => {
+          const p = pose(sample, hand);
+          if (!p) return;
+          const pp = project(p[0], p[1], p[2]);
+          if (!started) { ctx.moveTo(pp.x, pp.y); started = true; }
+          else ctx.lineTo(pp.x, pp.y);
+        });
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      });
+
+      const current = filtered[Math.min(frame, filtered.length - 1)];
+      const markers = hands.map(hand => {
+        const p = pose(current, hand);
+        return p ? {hand, p, point: project(p[0], p[1], p[2])} : null;
+      }).filter(Boolean).sort((a, b) => a.point.depth - b.point.depth);
+      markers.forEach(({hand, p, point}) => {
+        const color = hand === "left" ? leftColor : rightColor;
+        const heading = project(p[0] + Math.cos(p[5] || 0) * 0.04, p[1] + Math.sin(p[5] || 0) * 0.04, p[2]);
+        ctx.strokeStyle = "#1d2520";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(point.x, point.y);
+        ctx.lineTo(heading.x, heading.y);
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#1d2520";
+        ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+        ctx.fillText(hand, point.x + 9, point.y - 9);
+      });
+    }
+
+    function drawTrajectory() {
+      const {ctx, width, height} = resizeCanvas(trajectory);
+      trajectoryWrap.classList.toggle("interactive", projectionEl.value === "3d");
+      if (projectionEl.value === "3d") {
+        drawTrajectory3D(ctx, width, height);
+        return;
+      }
+      const [ax, ay, labelX, labelY] = projectionAxes();
+      drawGrid(ctx, width, height, [labelX, labelY]);
+      if (!filtered.length) {
+        ctx.fillStyle = muted;
+        ctx.font = "14px system-ui, sans-serif";
+        ctx.fillText("No samples", 24, 48);
+        return;
+      }
+
+      const hands = activeHands();
+      const allPoints = [];
+      filtered.forEach(sample => {
+        hands.forEach(hand => {
+          const p = pose(sample, hand);
+          if (p) allPoints.push([p[ax], p[ay]]);
+        });
+      });
+      const project = makeProjector(boundsFor(allPoints), width, height, 56);
+
+      hands.forEach(hand => {
+        ctx.strokeStyle = hand === "left" ? leftColor : rightColor;
+        ctx.lineWidth = 2.4;
+        ctx.globalAlpha = 0.88;
+        ctx.beginPath();
+        let started = false;
+        filtered.forEach(sample => {
+          const p = pose(sample, hand);
+          if (!p) return;
+          const [x, y] = project(p[ax], p[ay]);
+          if (!started) { ctx.moveTo(x, y); started = true; }
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      });
+
+      const current = filtered[Math.min(frame, filtered.length - 1)];
+      hands.forEach(hand => {
+        const p = pose(current, hand);
+        if (!p) return;
+        const [x, y] = project(p[ax], p[ay]);
+        ctx.fillStyle = hand === "left" ? leftColor : rightColor;
+        ctx.beginPath();
+        ctx.arc(x, y, 7, 0, Math.PI * 2);
+        ctx.fill();
+        if (ax === 0 && ay === 1) {
+          const yaw = p[5] || 0;
+          ctx.strokeStyle = "#1d2520";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + Math.cos(yaw) * 24, y - Math.sin(yaw) * 24);
+          ctx.stroke();
+        }
+      });
+    }
+
+    function seriesValue(sample, hand) {
+      const p = pose(sample, hand);
+      if (metricEl.value === "grip") {
+        const item = sample?.hands?.[hand];
+        return item && item.grip !== null && item.grip !== undefined ? item.grip : null;
+      }
+      return p ? p[Number(metricEl.value)] : null;
+    }
+
+    function drawChart() {
+      const {ctx, width, height} = resizeCanvas(chart);
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "#fbfcfb";
+      ctx.fillRect(0, 0, width, height);
+      ctx.strokeStyle = "#dce4df";
+      for (let y = 34; y < height - 22; y += 46) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+      }
+      const hands = activeHands();
+      const points = [];
+      filtered.forEach((sample, index) => {
+        hands.forEach(hand => {
+          const value = seriesValue(sample, hand);
+          if (value !== null) points.push([index, value]);
+        });
+      });
+      if (!points.length) return;
+      const minV = Math.min(...points.map(p => p[1]));
+      const maxV = Math.max(...points.map(p => p[1]));
+      const span = Math.max(1e-6, maxV - minV);
+      const xFor = index => filtered.length <= 1 ? 48 : 48 + index * (width - 88) / (filtered.length - 1);
+      const yFor = value => height - 32 - (value - minV) * (height - 64) / span;
+      hands.forEach(hand => {
+        ctx.strokeStyle = hand === "left" ? leftColor : rightColor;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        let started = false;
+        filtered.forEach((sample, index) => {
+          const value = seriesValue(sample, hand);
+          if (value === null) return;
+          const x = xFor(index), y = yFor(value);
+          if (!started) { ctx.moveTo(x, y); started = true; }
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      });
+      const x = xFor(Math.min(frame, filtered.length - 1));
+      ctx.strokeStyle = "#1d2520";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, 16); ctx.lineTo(x, height - 18); ctx.stroke();
+      ctx.fillStyle = "#5d6b64";
+      ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+      ctx.fillText(`${metricEl.options[metricEl.selectedIndex].text}  ${fmt(minV)}..${fmt(maxV)}`, 18, 20);
+    }
+
+    function renderHands(sample) {
+      handsEl.innerHTML = "";
+      ["left", "right"].forEach(hand => {
+        const item = sample?.hands?.[hand] || {valid: false, message: "n/a"};
+        const p = item.pose6 || [];
+        const color = hand === "left" ? leftColor : rightColor;
+        const div = document.createElement("div");
+        div.className = "hand";
+        div.innerHTML = `
+          <div class="hand-title"><span><span class="swatch" style="background:${color}"></span>${hand}</span><span>${item.valid ? "valid" : "missing"}</span></div>
+          <div class="kv">
+            <span>x</span><span>${fmt(p[0])}</span>
+            <span>y</span><span>${fmt(p[1])}</span>
+            <span>z</span><span>${fmt(p[2])}</span>
+            <span>roll</span><span>${fmt(p[3])}</span>
+            <span>pitch</span><span>${fmt(p[4])}</span>
+            <span>yaw</span><span>${fmt(p[5])}</span>
+            <span>grip</span><span>${fmt(item.grip, 3)}</span>
+            <span>ts</span><span>${fmt(item.source_ts, 3)}</span>
+          </div>`;
+        handsEl.appendChild(div);
+      });
+    }
+
+    function renderStatus() {
+      filtered = filteredSamples();
+      frame = Math.max(0, Math.min(frame, filtered.length - 1));
+      frameEl.max = Math.max(0, filtered.length - 1);
+      frameEl.value = frame;
+      const sample = filtered[frame];
+      const rows = [
+        ["source", dataInfo?.source || "log"],
+        ["samples", `${filtered.length}/${samples.length}`],
+        ["receiving", dataInfo?.receiving === undefined ? "n/a" : (dataInfo.receiving ? "yes" : "no")],
+        ["connected", dataInfo?.connected === undefined ? "n/a" : (dataInfo.connected ? "yes" : "no")],
+        ["packets", dataInfo?.packet_count ?? "n/a"],
+        ["dropped", dataInfo?.drop_count ?? "n/a"],
+        ["reconnects", dataInfo?.reconnect_count ?? "n/a"],
+        ["last addr", dataInfo?.last_addr || "n/a"],
+        ["frame", filtered.length ? `${frame + 1}/${filtered.length}` : "0/0"],
+        ["kind", sample ? sample.kind_title : kindEl.value],
+        ["time", sample?.time || "n/a"],
+        ["t", sample ? `${fmt(sample.t, 3)}s` : "n/a"],
+        ["line", sample ? String(sample.line) : "n/a"],
+        ["target", dataInfo?.kinds?.robot_target ?? 0],
+        ["raw", dataInfo?.kinds?.umi_raw ?? 0],
+        ["feedback", dataInfo?.kinds?.robot_feedback ?? 0]
+      ];
+      statusEl.innerHTML = rows.map(([k, v]) => `<span>${escapeHtml(k)}</span><span>${escapeHtml(v)}</span>`).join("");
+      renderHands(sample);
+      drawTrajectory();
+      drawChart();
+      updateReceiveButton();
+    }
+
+    function updateReceiveButton() {
+      const live = dataInfo?.receiving !== undefined;
+      receiveBtn.disabled = !live;
+      receiveBtn.textContent = dataInfo?.receiving ? "Stop Receiving" : "Start Receiving";
+      receiveBtn.classList.toggle("danger", Boolean(dataInfo?.receiving));
+    }
+
+    function applyPayload(payload, followLatest = false) {
+      const previousFilteredLength = filteredSamples().length;
+      const wasAtEnd = previousFilteredLength === 0 || frame >= previousFilteredLength - 1;
+      if (!payload.ok) {
+        samples = [];
+        dataInfo = payload.data || {kinds: {}};
+        errorEl.textContent = payload.error || "Load failed";
+      } else {
+        dataInfo = payload.data;
+        samples = payload.data.samples || [];
+        document.querySelector("#logPath").textContent = payload.data.log_file || document.querySelector("#logPath").textContent;
+        errorEl.textContent = payload.data.last_error || "";
+      }
+      if (followLatest) {
+        const nextFilteredLength = filteredSamples().length;
+        if (timer || wasAtEnd) frame = Math.max(0, nextFilteredLength - 1);
+      } else {
+        frame = 0;
+      }
+      renderStatus();
+    }
+
+    async function loadData() {
+      errorEl.textContent = "";
+      const response = await fetch("/api/data?max_points=6000");
+      const payload = await response.json();
+      applyPayload(payload, false);
+    }
+
+    async function toggleReceiving() {
+      if (dataInfo?.receiving === undefined) return;
+      const nextReceiving = !dataInfo.receiving;
+      receiveBtn.disabled = true;
+      try {
+        const response = await fetch("/api/receiving", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({receiving: nextReceiving, max_points: 6000})
+        });
+        const payload = await response.json();
+        applyPayload(payload, true);
+      } catch (err) {
+        errorEl.textContent = `Receiving control failed: ${err}`;
+        updateReceiveButton();
+      }
+    }
+
+    function connectUpdates() {
+      if (!("WebSocket" in window)) return;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+      const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+      ws = new WebSocket(`${scheme}://${window.location.host}/ws?max_points=6000`);
+      ws.onopen = () => {
+        if (!dataInfo?.last_error) errorEl.textContent = "";
+      };
+      ws.onmessage = event => {
+        try {
+          applyPayload(JSON.parse(event.data), true);
+        } catch (err) {
+          errorEl.textContent = `WebSocket payload error: ${err}`;
+        }
+      };
+      ws.onerror = () => {
+        errorEl.textContent = "WebSocket update failed; retrying.";
+      };
+      ws.onclose = () => {
+        if (wsRetryTimer) clearTimeout(wsRetryTimer);
+        wsRetryTimer = setTimeout(() => {
+          wsRetryTimer = null;
+          connectUpdates();
+        }, 1000);
+      };
+    }
+
+    function stop() {
+      if (timer) clearInterval(timer);
+      timer = null;
+      playBtn.textContent = "Play";
+    }
+
+    function play() {
+      if (timer) { stop(); return; }
+      playBtn.textContent = "Pause";
+      timer = setInterval(() => {
+        if (!filtered.length) return;
+        frame = frame + 1 >= filtered.length ? 0 : frame + 1;
+        renderStatus();
+      }, 100);
+    }
+
+    trajectory.addEventListener("pointerdown", event => {
+      if (projectionEl.value !== "3d") return;
+      draggingView = true;
+      dragStart = {x: event.clientX, y: event.clientY, yaw: viewYaw, pitch: viewPitch};
+      trajectory.setPointerCapture(event.pointerId);
+    });
+    trajectory.addEventListener("pointermove", event => {
+      if (!draggingView || !dragStart) return;
+      viewYaw = dragStart.yaw + (event.clientX - dragStart.x) * 0.01;
+      viewPitch = Math.max(-1.25, Math.min(1.25, dragStart.pitch + (event.clientY - dragStart.y) * 0.01));
+      renderStatus();
+    });
+    trajectory.addEventListener("pointerup", event => {
+      draggingView = false;
+      dragStart = null;
+      try {
+        trajectory.releasePointerCapture(event.pointerId);
+      } catch (err) {
+        // Pointer capture may already be released if the pointer leaves the canvas.
+      }
+    });
+    trajectory.addEventListener("pointercancel", () => {
+      draggingView = false;
+      dragStart = null;
+    });
+
+    document.querySelector("#refresh").addEventListener("click", loadData);
+    receiveBtn.addEventListener("click", toggleReceiving);
+    playBtn.addEventListener("click", play);
+    frameEl.addEventListener("input", () => { frame = Number(frameEl.value); renderStatus(); });
+    [kindEl, projectionEl, metricEl, showLeftEl, showRightEl].forEach(el => el.addEventListener("change", () => {
+      if (el === kindEl) frame = 0;
+      renderStatus();
+    }));
+    window.addEventListener("resize", renderStatus);
+    loadData();
+    connectUpdates();
+  </script>
+</body>
+</html>
